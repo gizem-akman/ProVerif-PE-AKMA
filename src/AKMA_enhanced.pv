@@ -1,0 +1,420 @@
+(* 
+3 parties:      UE (User Equipment) 
+                MNO (Mobile Network Operator)
+                AF (Application Function)
+
+In the beginning, each party has the following:
+UE: SUPI, K, ID_MNO, ID_AF, user_id, psw, PK_MNO, K_UE
+MNO: SUPI, K, ID_MNO, PK_MNO, SK_MNO, K_MNO
+AF: ID-AF, ID_MNO
+
+Step 1(!): UE and MNO run AKA (Authentication and Key Agreement). 
+        As the result of AKA, UE and MNO share a key K, using SUPI.
+Step 2: UE and MNO derive K_AKMA and A-KID from K. 
+        (Originally, K_AKMA is derived from K_AUSF, which is also derived from K.)
+Step 3: UE derives K_AF from K_AKMA.
+Step 4: UE generates T=HMAC(K_UE,user_id,ID_AF)
+Step 5: Generate M=A-KID|ID-AF|T
+Step 6: UE encapsulates PK_MNO: Encaps(PK_MNO,rand)
+      : UE computes Ksh=KEMkey(encaps)
+      : UE computes C=KEMCipher(encaps)
+      : UE computes N=senckey(N,Ksh)
+      : UE computes MAC=hmac(N,Ksh)
+Step 7: UE derives K'_AF=KDF2(Ks,K_AF)
+Step 8: UE sends session establishment request (N,C,MAC,ID_MNO) to AF.
+Step 9: AF sends N, C, MAC, and ID-AF to MNO.
+Step 10: MNO decapsulates: Ksh= Decapskey(SK_MNO,C).
+       : MNO verifies MAC=hmac(N,Ksh).
+       : MNO decrypts N: M=sdeckey(N,Ksh)
+Step 11: MNO verifies ID-AF is valid. 
+Step 12: MNO derives K_AF from K_AKMA.
+Step 13: MNO derives  K'_AF=KDF2(Ks,K_AF).
+Step 14: MNO computes H-ID=HMAC(K_MNO,T|SUPI|ID-AF)
+Step 15: MNO sends H-ID, K'_AF, and expiration time of K'_AF to AF.
+Step 16: AF stores H-ID, K'_AF, and expiration time.
+Step 17: AF sends session establishment response to UE.
+Step 18: UE receives success message.
+
+To be defined in protocol: A-KID, K_AKMA, K_AF, K'_AF, Ks
+
+Threat Model: Dolev-Yao
+*)
+
+(*types*)
+type key. 
+type pkey.(*public key*)
+type skey.(*secret key*)
+
+(*channels*)
+free chUEMNO: channel[private]. (*Channel between UE and MNO. Secure connection is established with the key result of AKA.*)
+free chMNOAF: channel[private]. (*Channel between MNO and AF. Secure connection (TLS) is mandatory [TS 33.501] *)
+free chUEAF: channel. (*Channel between UE and AF. Unsecure connection.*)
+free internet: channel. (*Unsecure channel*)
+
+(*identifiers*)
+free SUPI: bitstring[private]. (*The private identifier of UE for MNO.*)
+free ID_AF: bitstring. (*The public identifier of Application Function (AF).*)
+free ID_MNO: bitstring. (*The public identifier of Home Network (MNO).*)
+free user_id: bitstring[private]. (*The identifier of UE for AF*)
+
+(*keys*)
+free K: key[private]. (*The shared private key between UE and MNO.*)
+free K_MNO: key[private]. (*The key that MNO uses to compute H-ID*)
+free K_UE: key[private]. (*The key that UE uses to compute T*)
+free SK_MNO: skey[private]. (*The secret key of MNO*)
+free PK_MNO: pkey. (*The public key of MNO*)
+
+(*passwords*)
+free psw: bitstring[private]. (*The password of UE for AF*)
+
+(*nonces*)
+free nAKID: bitstring[private]. (*The nonce related to A_KID*)
+free nKAKMA: bitstring[private]. (*The nonce related to K_AKMA*)
+free nKAF: bitstring[private]. (*The nonce related to K_AF*)
+free nT: bitstring[private]. (*The nonce related to T*)
+free nKsh: bitstring[private]. (*The nonce related to K_sh*)
+free nM: bitstring[private]. (*The nonce related to Mue*)
+free nKpAF: bitstring[private]. (*The nonce related to K'_AF*)
+
+(*database*)
+table database(bitstring,bitstring,key). (*The database of MNO, where MNO keeps A_KID, SUPI, and K_AKMA of the user*)
+table choosechannel(bitstring,channel). (*The database of AF that stores channels and ids*)
+table databaseAF(bitstring,key,bitstring). (*database of AF that stores H-ID, K'_AF, expiration time of K'_AF*)
+
+(*functions*)
+fun fATID(bitstring,key):bitstring. (*A-TID derivation. Inputs: K, SUPI*)
+fun fAKID(bitstring):bitstring. (*A-KID derivation. Inputs: (A-TID,ID_MNO)*) 
+fun fKAKMA(bitstring,key):key. (*K_AKMA derivation. Inputs: K, SUPI*)
+fun fKAF(bitstring,key):key. (*K_AF derivation. Inputs: K_AKMA, ID_AF*)
+fun fexp(key):bitstring. (*expiration time definition for K_AF. Input: K_AF*)
+fun senc(bitstring,bitstring):bitstring. (*symmetric key encryption of the bitstring with another bitstrings.*)
+reduc forall x:bitstring, y:bitstring; sdec(senc(x,y),y)=x. (*symmetric key decryption of the bitstring with another bitstrings.*)
+fun senckey(bitstring,key):bitstring. (*symmetric key encryption of the bitstring with a key.*)
+reduc forall x:bitstring, y:key; sdeckey(senckey(x,y),y)=x. (*symmetric key decryption of the bitstring with a key.*)
+fun ssenckey(bitstring,skey):bitstring. (*symmetric key encryption of the bitstring with a skey.*)
+reduc forall x:bitstring, y:skey; ssdeckey(ssenckey(x,y),y)=x. (*symmetric key decryption of the bitstring with a skey.*)
+
+fun hmac(bitstring,key):bitstring. (*keyed hash function*)
+
+fun pk(skey):pkey. (*public key derivation for the secret key*)
+fun aenc(bitstring,pkey):bitstring. (*asymmetric encryption with inputs plaintext and key and outputs ciphertext*)
+reduc forall m:bitstring,k:skey; adec(aenc(m,pk(k)),k)=m. (*asymmetric decryption with inputs ciphertext and secret key and outputs plaintext*)
+
+fun DH(pkey,skey):key. (*Diffie-Hellman key exchange where inputs are pkey and skey and output is a shared key*)
+fun KDF1(key):key. (*Key Derivation Function for deriving Ksh from Ks*)
+fun KDF2(key,key):key. (*Key Derivation Function for deriving K'_AF from K_AF and DH secret*)
+ 
+(*Key Encapsulation Mechanism*)
+fun Encaps(pkey,bitstring):bitstring. (*Encaps takes the pk and a freshly generated random number. Note that by definition Encaps is a probabilistic algorithm *)
+fun KEMkey(bitstring):key. (*takes Encaps as input and outputs the shared KEM key*)
+fun KEMCipher(bitstring):bitstring. (*takes Encaps as input and outputs the KEM ciphertext*)
+fun DecapsKey(skey,bitstring):key. (*takes the KEM secret key and ciphertext and outputs the KEM shared key*)
+
+(*The KEM is given by the following equations *) 
+equation forall sk:skey, r:bitstring;
+DecapsKey(sk,KEMCipher(Encaps(pk(sk),r)))=KEMkey(Encaps(pk(sk),r)).
+
+(*events*)
+(*8*)
+event UEsendReqAF(bitstring,bitstring,bitstring). (*UE sends session establishment request to AF.*)
+(*9*)
+event AFrecReqUE(bitstring,bitstring,bitstring). (*AF receives session establishment request from UE.*)
+event AFsendReqMNO(bitstring,bitstring,bitstring). (*AF sends request for AKMA key to MNO.*)
+(*10*)
+event MNOrecReqAF(bitstring,bitstring,bitstring). (*MNO receives request for AKMA key from AF.*)
+(*15*)
+event MNOsendResAF(bitstring,bitstring,key). (*MNO sends respond for AKMA key to AF.*)
+(*16*)
+event AFrecResMNO(bitstring,bitstring,key). (*AF receives respond for AKMA key from MNO.*)
+(*17*)
+event AFsendResUE(bitstring). (*AF sends session establishment respond to UE.*)
+(*18*)
+event UErecResAF(bitstring). (*UE receives session establishment respond from AF.*)
+
+event UEbegin(bitstring). (*UE begins the protocol with session identifier N.*)
+event UEendN(bitstring). (*UE ends the protocol with session identifier N*)
+event UEendKpAF(key). (*UE ends the protocol with session key K'_AF*)
+event MNObegin(bitstring). (*MNO begins the protocol with session identifier N.*)
+event MNOendN(bitstring). (*MNO ends the protocol with session identifier N.*)
+event MNOendKpAF(key). (*MNO ends the protocol with session key K'_AF*)
+event AFbegin(bitstring). (*AF begins the protocol with session identifier N.*)
+event AFendN(bitstring). (*AF ends the protocol with session identifier N.*)
+event AFendKpAF(key). (*AF ends the protocol with session key K'_AF*)
+     
+
+(*the entities derived or received keys.*)
+event UEhasKAKMA(key).
+event UEhasAKID(bitstring).
+event UEhasKAF(key).
+event MNOhasKAKMA(key).
+event MNOhasAKID(bitstring).
+event indatabase(bitstring,bitstring,key). (*MNO saves UE's A-KID, SUPI, and K_AKMA to its database.*)
+event UEhasT(bitstring).
+event UEhasKsh(key).
+event UEhasN(bitstring).
+event UEhasKpAF(key).
+event AFhasN(bitstring).
+event MNOhasN(bitstring).
+event MNOhasKshMNO(key).
+event trMAC(bitstring).
+event MNOgetAKID(bitstring).
+event MNOgetIDAF(bitstring).
+event MNOgetT(bitstring).
+event trIDAF(bitstring).
+event yesKAKMA(key). (*MNO finds SUPI and K_AKMA related to the A_KID*)
+event MNOhasKAF(key).
+event MNOhasKpAF(key).
+event MNOhasHID(bitstring).
+event AFhasKpAF(key).
+event AFhasHID(bitstring).
+
+(*Secrecy*)
+query attacker(K). 
+query attacker(SUPI). 
+query attacker(SK_MNO).
+query attacker(nAKID). 
+query attacker(nKAKMA). 
+query attacker(nT). 
+query attacker(nKsh). 
+query attacker(nM). 
+query attacker(nKpAF). 
+
+(*Strong Secrecy*)
+noninterf SUPI. 
+noninterf K. 
+
+(*Weak Secrecy*)
+weaksecret SUPI.
+weaksecret K.
+
+(*Reachability*)
+(*2*)
+query a:key; event(UEhasKAKMA(a)).
+query a:bitstring; event(UEhasAKID(a)).
+query a:key; event(MNOhasKAKMA(a)).
+query a:bitstring; event(MNOhasAKID(a)).
+query a:bitstring,b:bitstring,c:key; event(indatabase(a,b,c)).
+(*3*)
+query a:key; event(UEhasKAF(a)).
+(*4*)
+query a:bitstring; event(UEhasT(a)).
+(*6*)
+query a:key; event(UEhasKsh(a)).
+query a:bitstring; event(UEhasN(a)).
+(*7*)
+query a:key; event(UEhasKpAF(a)).
+(*8*)
+query a:bitstring,b:bitstring,d:bitstring; event(UEsendReqAF(a,b,d)). (*UE sends session establishment request to AF.*)
+(*9*)
+query a:bitstring,b:bitstring,d:bitstring; event(AFrecReqUE(a,b,d)). (*AF receives session establishment request from UE.*)
+query a:bitstring; event(AFhasN(a)).
+query a:bitstring,b:bitstring,d:bitstring; event(AFsendReqMNO(a,b,d)). (*AF sends request for AKMA key to MNO.*)
+(*10*)
+query a:bitstring,b:bitstring,d:bitstring; event(MNOrecReqAF(a,b,d)). (*MNO receives request for AKMA key from AF.*)
+query a:bitstring; event(MNOhasN(a)).
+query a:key; event(MNOhasKshMNO(a)).
+query a:bitstring; event(trMAC(a)).
+query a:bitstring; event(MNOgetAKID(a)).
+query a:bitstring; event(MNOgetIDAF(a)).
+query a:bitstring; event(MNOgetT(a)).
+(*11*)
+query a:bitstring; event(trIDAF(a)).
+(*12*)
+query a:key; event(yesKAKMA(a)). (*MNO finds K_AKMA that is related to A_KID*)
+query a:key; event(MNOhasKAF(a)). (*MNO derives K_AF*)
+(*13*)
+query a:key; event(MNOhasKpAF(a)).
+(*14*)
+query a:bitstring; event(MNOhasHID(a)).
+(*15*)
+query a:bitstring,b:bitstring,c:key; event(MNOsendResAF(a,b,c)). (*MNO sends respond for AKMA key to AF.*)
+(*16*)
+query a:bitstring,b:bitstring,c:key; event(AFrecResMNO(a,b,c)). (*AF receives respond for AKMA key from MNO.*)
+query a:key; event(AFhasKpAF(a)). (*AF has Kp_AF*)
+query a:bitstring; event(AFhasHID(a)).
+(*17*)
+query a:bitstring; event(AFsendResUE(a)). (*AF sends session establishment respond to UE.*)
+(*18*)
+query a:bitstring; event(UErecResAF(a)). (*UE receives session establishment respond from AF.*)
+
+
+(*Aliveness*)
+(*(A->B): A finished the protocol with B implies that B has participated in the protocol.*)
+(* UE-->AF*)                                          
+query a:bitstring,b:bitstring,c:bitstring,d:bitstring,e:bitstring,f:bitstring;
+event(UErecResAF(a)) ==>  event(AFsendReqMNO(c,d,e)) || event(AFsendResUE(f)).
+(* AF-->UE*)                                          
+query a:bitstring,b:bitstring,c:bitstring,d:bitstring;
+event(AFsendResUE(a)) ==> event(UEsendReqAF(b,c,d)).
+(* MNO-->AF*)                                          
+query a:bitstring,b:bitstring,c:key,d:bitstring,e:bitstring,f:bitstring,g:bitstring;
+event(MNOsendResAF(a,b,c)) ==> event(AFsendResUE(d)) || event(AFsendReqMNO(e,f,g)).
+(* AF-->MNO*)                                          
+query a:bitstring,b:bitstring,c:bitstring,d:key;
+event(AFsendResUE(a)) ==> event(MNOsendResAF(b,c,d)). 
+
+(*Weak Agreements: *)
+(*The protocol guarantees to A non-injective agreement with B if 
+whenever A completes a run of the protocol, apparently with B, 
+then B has previously been running the protocol, apparently with A.*)
+(* UE-->AF*)     
+query a:bitstring,b:bitstring; event(UErecResAF(a)) ==> event(AFsendResUE(b)). (*If UE receives the respond, then AF previously sent the respond.*)
+(* AF-->UE*)                                          
+query a:bitstring,b:bitstring,c:bitstring,e:bitstring,f:bitstring,h:bitstring; event(AFrecReqUE(a,f,h)) ==> event(UEsendReqAF(b,c,e)). (*If AF receives the request, then UE previously sent the request.*)
+(* MNO-->AF*) 
+query a:bitstring,b:bitstring,c:bitstring,d:bitstring,f:bitstring,h:bitstring; event(MNOrecReqAF(a,b,h)) ==> event(AFsendReqMNO(c,d,f)). (*If MNO receives the request, then AF previously sent the request.*)
+(* AF-->MNO*)                                          
+query a:bitstring,b:bitstring,c:key,d:bitstring,e:bitstring,f:key; event(AFrecResMNO(a,b,c)) ==> event(MNOsendResAF(d,e,f)). (*If AF receives the respond, then MNO previously sent the respond.*)
+
+(*Non-injective / Injective*)
+(*The protocol guarantees to A non-injective agreement with B if 
+whenever A completes a run of the protocol, apparently with B, 
+then B has previously been running the protocol, apparently with A, 
+both A and B have an identical value for a data item M*)
+(*In addition to non injective agreement, injective agreement requires 
+that each run of A corresponds to a unique run of B*)
+
+(*AF->MNO on A-KID*)
+query a:bitstring,c:bitstring; event(AFendN(a)) ==> event(MNOhasN(c)).
+query a:bitstring,c:bitstring; inj-event(AFendN(a)) ==> inj-event(MNOhasN(c)).
+
+(*AF->MNO on K_AF*)
+query b:key,d:key; event(AFendKpAF(b)) ==> event(MNOhasKpAF(d)).
+query b:key,d:key; inj-event(AFendKpAF(b)) ==> inj-event(MNOhasKpAF(d)).
+
+(*MNO->AF on A-KID*)
+query a:bitstring,c:bitstring; event(MNOendN(a)) ==> event(AFhasN(c)).
+query a:bitstring,c:bitstring; inj-event(MNOendN(a)) ==> inj-event(AFhasN(c)).
+
+(*MNO->AF on K_AF*)
+query b:key,d:key; event(MNOendKpAF(b)) ==> event(AFhasKpAF(d)).
+query b:key,d:key; inj-event(MNOendKpAF(b)) ==> inj-event(AFhasKpAF(d)).
+
+(*---------------------------------------------------------------------------*)
+
+(*The processes in the Protocol*)
+
+(*We assume Step 1 is already happened before this protocol starts.*)
+
+(*UE*)
+let UE(SUPI:bitstring,ID_MNO:bitstring,ID_AF:bitstring,K:key,user_id:bitstring,psw:bitstring,PK_MNO:pkey,K_UE:key)= 
+(*Step 2*)
+     let K_AKMAue=fKAKMA(SUPI,K) in
+     event UEhasKAKMA(K_AKMAue);
+     let ATID=fATID(SUPI,K) in
+     let A_KIDue=fAKID((ATID,ID_MNO)) in
+     event UEhasAKID(A_KIDue);
+(*Step 3*)
+     let K_AFue=fKAF(ID_AF,K_AKMAue) in
+     event UEhasKAF(K_AFue);
+     let expKAF=fexp(K_AFue) in
+(*Step 4*)
+     let T=hmac((user_id,ID_AF),K_UE) in
+     event UEhasT(T);
+(*Step 5*)
+     let  M=(A_KIDue,ID_AF,T) in
+(*Step 6*)
+     (*Key Encapsulation*)
+     new rUE:bitstring;     
+     let KshUE=KEMkey(Encaps(PK_MNO,rUE)) in
+     event UEhasKsh(KshUE); 
+     let C=KEMCipher(Encaps(PK_MNO,rUE)) in
+     (*Data Encapsulation*)                                        
+     let N=senckey(M,KshUE) in
+     event UEhasN(N);
+     let MAC_N=hmac(N,KshUE) in
+(*Step 7*)
+     let Kp_AFue=KDF2(KshUE,K_AFue) in
+     event UEhasKpAF(Kp_AFue);
+(*Step 8*)
+     event UEsendReqAF(N,MAC_N,ID_MNO);
+     event UEbegin(N);
+     out(chUEAF,(N,C,MAC_N,ID_MNO));
+(*Step 18*)
+     in(chUEAF,mes:bitstring);
+     event UErecResAF(mes);
+     event UEendN(N);
+     event UEendKpAF(Kp_AFue);
+     out(chUEAF,senc(nAKID,A_KIDue));
+     out(chUEAF,senckey(nKAKMA,K_AKMAue));     
+     out(chUEAF,senckey(nKAF,K_AFue));
+     out(chUEAF,senc(nT,T));
+     out(chUEAF,senckey(nKsh,KshUE));
+     out(chUEAF,senc(nM,M));
+     out(chUEAF,senckey(nKpAF,Kp_AFue)).
+     
+(*MNO*)
+let MNO(SUPI:bitstring,ID_MNO:bitstring,K:key,SK_MNO:skey,ID_AF:bitstring)= 
+(*Step 2*)
+     let K_AKMAmno=fKAKMA(SUPI,K) in
+     event MNOhasKAKMA(K_AKMAmno);
+     let A_KIDmno=fAKID((fATID(SUPI,K),ID_MNO)) in
+     event MNOhasAKID(A_KIDmno);
+     event indatabase(A_KIDmno,SUPI,K_AKMAmno);
+     insert database(A_KIDmno,SUPI,K_AKMAmno);
+(*Step 10*)
+     in(chMNOAF,(Nmnorec:bitstring,C_mno:bitstring,MACmnorec:bitstring,ID_AFrec:bitstring));
+     event MNObegin(Nmnorec);
+     event MNOrecReqAF(Nmnorec,MACmnorec,ID_AFrec);
+     event MNOhasN(Nmnorec);
+     (*Key Decapsulation *)
+     let KshMNO=DecapsKey(SK_MNO, C_mno) in
+     event MNOhasKshMNO(KshMNO);
+     (* Data Decapsulation *)
+     let MAC_Nmno=hmac(Nmnorec,KshMNO) in 
+     if MAC_Nmno=MACmnorec then event trMAC(MAC_Nmno);
+     let (A_KID_rec:bitstring,ID_AF_recUE:bitstring,T_rec:bitstring)=sdeckey(Nmnorec,KshMNO) in
+     event MNOgetAKID(A_KID_rec);
+     event MNOgetIDAF(ID_AF_recUE);
+     event MNOgetT(T_rec);
+(*Step 11*)
+     if ID_AFrec=ID_AF_recUE&&ID_AFrec=ID_AF then event trIDAF(ID_AFrec);
+(*Step 12*)
+     get database(=A_KID_rec,SUPIrec,K_AKMArec) in 
+     if K_AKMArec=K_AKMAmno&&SUPIrec=SUPI then event yesKAKMA(K_AKMArec);
+     let K_AFmno=fKAF(ID_AFrec,K_AKMArec) in
+     event MNOhasKAF(K_AFmno); 
+     let expKAF=fexp(K_AFmno) in
+(*Step 13*)
+     let Kp_AFmno=KDF2(KshMNO,K_AFmno) in
+     event MNOhasKpAF(Kp_AFmno);
+(*Step 14*)
+     let H_ID=hmac((T_rec,SUPI,ID_AFrec),K_MNO) in
+     event MNOhasHID(H_ID);
+(*Step 15*)
+     event MNOsendResAF(H_ID,expKAF,Kp_AFmno);
+     event MNOendN(Nmnorec);
+     event MNOendKpAF(K_AFmno);
+     out(chMNOAF,(H_ID,expKAF,Kp_AFmno)).
+
+(*AF*)
+let AF(ID_AF:bitstring,ID_MNO:bitstring)=
+     insert choosechannel(ID_MNO,chMNOAF);
+(*Step 9*)
+     in(chUEAF,(Nrec:bitstring,C_rec:bitstring,MAC_Nrec:bitstring,idMNO:bitstring));
+     event AFbegin(Nrec);
+     event AFrecReqUE(Nrec,MAC_Nrec,idMNO);
+     event AFhasN(Nrec);
+     get choosechannel(=idMNO,chnl) in
+     event AFsendReqMNO(Nrec,MAC_Nrec,ID_AF);
+     out(chnl,(Nrec,C_rec,MAC_Nrec,ID_AF));
+(*Step 16*)
+     in(chMNOAF,(H_IDaf:bitstring,expKAFaf:bitstring,Kp_AFaf:key));
+     event AFrecResMNO(H_IDaf,expKAFaf,Kp_AFaf);
+     event AFhasKpAF(Kp_AFaf);
+     event AFhasHID(H_IDaf);
+     insert databaseAF(H_IDaf,Kp_AFaf,expKAFaf);
+(*Step 17*)
+     new messageSuccess: bitstring;
+     event AFsendResUE(messageSuccess);
+     event AFendN(Nrec);
+     event AFendKpAF(Kp_AFaf);
+     out(chUEAF,messageSuccess).
+     
+(*main process*)
+process
+     new ID_MNO:bitstring;
+     new ID_AF:bitstring;
+     let PK_MNO = pk(SK_MNO) in
+     out(internet, PK_MNO);
+     (!UE(SUPI,ID_MNO,ID_AF,K,user_id,psw,PK_MNO,K_UE) | !MNO(SUPI,ID_MNO,K,SK_MNO,ID_AF) | !AF(ID_AF,ID_MNO)) 
