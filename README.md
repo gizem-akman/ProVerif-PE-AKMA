@@ -14,6 +14,8 @@ We propose a privacy-enhanced version of AKMA (PE-AKMA) that fixes the shortcomi
 
 We provide Formal Verification codes for the followings.
 
+### src file:
+
 **AKMA.pv** - 5G AKMA protocol
 
 **AKMA_forwardsecrecy.pv** - 5G AKMA (only checks forward secrecy)
@@ -21,6 +23,10 @@ We provide Formal Verification codes for the followings.
 **AKMA_enhanced.pv** - PE-AKMA protocol
 
 **AKMA_enhanced_forwardsecrecy.pv** - PE-AKMA protocol (only checks forward secrecy)
+
+### out file:
+
+The graphical representation of the attacks that ProVerif finds related to the queries.
 
 ## ProVerif
 
