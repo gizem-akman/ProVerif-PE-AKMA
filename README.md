@@ -1,6 +1,6 @@
 # AKMA and PE-AKMA ProVerif implementation
 
-This project is developed in Secure System Group, University of Helsinki, by Gizem Akman, Mohamed Taoufiq Damir, Philip Ginzboorg, and Valtteri Niemi.
+This project contains the code of ProVerif implementation of AKMA and PE-AKMA presented in [Privacy-Enhanced AKMA for Multi-Access Edge Computing Mobility](https://www.mdpi.com/2073-431X/12/1/2) by Gizem Akman, Mohamed Taoufiq Damir, Philip Ginzboorg, and Valtteri Niemi. 
 
 ## Objective
 
@@ -33,6 +33,10 @@ The graphical representation of the attacks that ProVerif finds related to the q
 ProVerif is a state-of-art tool for formal verification for the symbolic modeling and analysis of security protocols. It uses Dolev-Yao as an adversary model. ProVerif uses the applied pi-calculus as a formal language, and translates the protocol into a set of Horn clauses, then tries to conclude if some security property is falsified, i.e., finds an attack.
 
 For more information, [Proverif Manual](https://bblanche.gitlabpages.inria.fr/proverif/manual.pdf) is available online.
+
+## Contact
+
+Corresponding author is Gizem Akman. You can contact via gizem [dot] akman [at] helsinki [dot] fi.
 
 ## References
 
